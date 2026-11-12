@@ -658,13 +658,6 @@ typedef unsigned short uint16;
 typedef   signed short  int16;
 typedef unsigned int   uint32;
 typedef   signed int    int32;
-#ifdef _MSC_VER /* MSVC6 has no long long */
-typedef unsigned __int64 uint64;
-#elif defined(_LP64) || defined(__LP64__)
-typedef unsigned long uint64;
-#else
-typedef unsigned long long uint64;
-#endif /* uint64 */
 #endif /* !BeOS && !AmigaOS4 && !KallistiOS */
 
 #ifdef __has_feature
@@ -719,7 +712,7 @@ typedef struct
    uint8  lookup_type;
    uint8  sequence_p;
    uint8  sparse;
-   uint64 lookup_values; /* entries (24 bits) * dimensions (16 bits) */
+   uint32 lookup_values;
    codetype *multiplicands;
    uint32 *codewords;
    #ifdef STB_VORBIS_FAST_HUFFMAN_SHORT
@@ -996,10 +989,9 @@ static void *make_block_array(void *mem, int count, int size)
   }
 }
 
-static void *setup_malloc(vorb *f, uint64 siz)
+static void *setup_malloc(vorb *f, int sz)
 {
-   int sz = (int)siz;
-   if (sz <= 0 || (uint64)INT_MAX - 7 < siz) return NULL;
+   if (sz <= 0 || INT_MAX - 7 < sz) return NULL;
    sz = (sz+7) & ~7; // round up to nearest 8 for alignment of future allocs.
    f->setup_memory_required += sz;
    if (f->alloc.alloc_buffer) {
@@ -1017,20 +1009,19 @@ static void setup_free(vorb *f, void *p)
    free(p);
 }
 
-static void *setup_temp_malloc(vorb *f, uint64 siz)
+static void *setup_temp_malloc(vorb *f, int sz)
 {
-   int sz = (int)siz;
-   if (sz <= 0 || (uint64)INT_MAX - 7 < siz) return NULL;
+   if (sz <= 0 || INT_MAX - 7 < sz) return NULL;
    sz = (sz+7) & ~7; // round up to nearest 8 for alignment of future allocs.
    if (f->alloc.alloc_buffer) {
       if (f->temp_offset < sz || f->temp_offset - sz < f->setup_offset) return NULL;
       f->temp_offset -= sz;
       return (char *) f->alloc.alloc_buffer + f->temp_offset;
    }
-   return malloc(sz);
+   return sz ? malloc(sz) : NULL;
 }
 
-static void setup_temp_free(vorb *f, void **_p, uint64 sz)
+static void setup_temp_free(vorb *f, void **_p, int sz)
 {
    void *p = *_p;
    *_p = NULL;
@@ -3647,6 +3638,8 @@ static int is_whole_packet_present(stb_vorbis *f)
 }
 #endif // !STB_VORBIS_NO_PUSHDATA_API
 
+#define CODEBOOK_LIMIT (1 << 18)
+
 static int start_decoder(vorb *f)
 {
    uint8 header[6], x,y;
@@ -3721,6 +3714,7 @@ static int start_decoder(vorb *f)
    if (!vorbis_validate(header))                    return error(f, VORBIS_invalid_setup);
    //file vendor
    len = get32_packet(f);
+   if (len < 0 || len == INT_MAX)                   return error(f, VORBIS_invalid_setup);
    f->vendor = (char*)setup_malloc(f, sizeof(char) * (len+1));
    if (f->vendor == NULL)                           return error(f, VORBIS_outofmem);
    for(i=0; i < len; ++i) {
@@ -3732,15 +3726,10 @@ static int start_decoder(vorb *f)
    f->comment_list = NULL;
    if (f->comment_list_length > 0)
    {
-      if (INT_MAX / (int)sizeof(char*) < f->comment_list_length)
-          goto no_comment;
+      if (INT_MAX / (int)sizeof(char*) < f->comment_list_length) return error(f, VORBIS_invalid_setup);
       len = sizeof(char*) * f->comment_list_length;
       f->comment_list = (char**) setup_malloc(f, len);
-      if (f->comment_list == NULL) {
-         no_comment:
-         f->comment_list_length = 0;
-         return error(f, VORBIS_outofmem);
-      }
+      if (f->comment_list == NULL) { f->comment_list_length = 0; return error(f, VORBIS_outofmem); }
       memset(f->comment_list, 0, len);
    }
 
@@ -3816,6 +3805,7 @@ static int start_decoder(vorb *f)
       c->sparse = ordered ? 0 : get_bits(f,1);
 
       if (c->dimensions == 0 && c->entries != 0)    return error(f, VORBIS_invalid_setup);
+      if (c->entries && CODEBOOK_LIMIT / c->entries < c->dimensions) return error(f, VORBIS_invalid_setup);
       if (f->valid_bits < 0)                        return error(f, VORBIS_unexpected_eof);
 
       if (c->sparse) {
@@ -3942,12 +3932,9 @@ static int start_decoder(vorb *f)
             if (values < 0) return error(f, VORBIS_invalid_setup);
             c->lookup_values = (uint32) values;
          } else {
-            /* changed to unsigned multiply for:
-             * https://github.com/nothings/stb/issues/1168
-             * https://github.com/nothings/stb/issues/1947
-             * https://github.com/nothings/stb/issues/1933
-             * https://github.com/libxmp/libxmp/issues/996 */
-            c->lookup_values = (uint64)c->entries * (uint64)c->dimensions;
+            /* unsigned multiply to suppress (legitimate) warning.
+             * https://github.com/nothings/stb/issues/1168 */
+            c->lookup_values = (unsigned)c->entries * (unsigned)c->dimensions;
          }
          if (c->lookup_values == 0) return error(f, VORBIS_invalid_setup);
          mults = (uint16 *) setup_temp_malloc(f, sizeof(mults[0]) * c->lookup_values);
@@ -3966,9 +3953,9 @@ static int start_decoder(vorb *f)
             // pre-expand the lookup1-style multiplicands, to avoid a divide in the inner loop
             if (sparse) {
                if (c->sorted_entries == 0) goto skip;
-               c->multiplicands = (codetype *) setup_malloc(f, (uint64) sizeof(c->multiplicands[0]) * c->sorted_entries * c->dimensions);
+               c->multiplicands = (codetype *) setup_malloc(f, sizeof(c->multiplicands[0]) * c->sorted_entries * c->dimensions);
             } else
-               c->multiplicands = (codetype *) setup_malloc(f, (uint64) sizeof(c->multiplicands[0]) * c->entries        * c->dimensions);
+               c->multiplicands = (codetype *) setup_malloc(f, sizeof(c->multiplicands[0]) * c->entries        * c->dimensions);
             if (c->multiplicands == NULL) return error(f, VORBIS_outofmem);
             len = sparse ? c->sorted_entries : c->entries;
             for (j=0; j < len; ++j) {
