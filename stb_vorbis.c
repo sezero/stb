@@ -144,6 +144,8 @@ typedef struct
    int max_frame_size;
 } stb_vorbis_info;
 
+#ifndef STB_VORBIS_NO_COMMENTS
+
 typedef struct
 {
    char *vendor;
@@ -151,6 +153,8 @@ typedef struct
    int comment_list_length;
    char **comment_list;
 } stb_vorbis_comment;
+
+#endif
 
 // get general information about the file
 extern stb_vorbis_info stb_vorbis_get_info(stb_vorbis *f);
@@ -456,12 +460,12 @@ enum STBVorbisError
 //     does not compile the code for converting audio sample data from
 //     float to integer (implied by STB_VORBIS_NO_PULLDATA_API)
 // #define STB_VORBIS_NO_INTEGER_CONVERSION
-
-// STB_VORBIS_NO_FAST_SCALED_FLOAT
-//      does not use a fast float-to-int trick to accelerate float-to-int on
-//      most platforms which requires endianness be defined correctly.
-//#define STB_VORBIS_NO_FAST_SCALED_FLOAT
-
+//
+// STB_VORBIS_NO_COMMENTS
+//     disables reading and storing vendor and comment information,
+//     which can large amounts of memory with adversarial inputs and is
+//     not necessary for pure audio playback.
+// #define STB_VORBIS_NO_COMMENTS
 
 // STB_VORBIS_MAX_CHANNELS [number]
 //     globally define this to the maximum number of channels you need.
@@ -558,10 +562,6 @@ enum STBVorbisError
 //     you'd ever want to do it except for debugging.
 // #define STB_VORBIS_NO_DEFER_FLOOR
 
-// STB_VORBIS_NO_COMMENTS
-//     Disables reading and storing user comments.
-// #define STB_VORBIS_NO_COMMENTS
-
 
 
 
@@ -570,22 +570,6 @@ enum STBVorbisError
 #if defined(STB_VORBIS_NO_CRT) && !defined(STB_VORBIS_NO_STDIO)
    #define STB_VORBIS_NO_STDIO 1
 #endif
-
-#ifndef STB_VORBIS_NO_INTEGER_CONVERSION
-#ifndef STB_VORBIS_NO_FAST_SCALED_FLOAT
-
-   // only need endianness for fast-float-to-int, which we don't
-   // use for pushdata
-
-   #ifndef STB_VORBIS_BIG_ENDIAN
-     #define STB_VORBIS_ENDIAN  0
-   #else
-     #define STB_VORBIS_ENDIAN  1
-   #endif
-
-#endif
-#endif
-
 
 #ifndef STB_VORBIS_NO_STDIO
 #include <stdio.h>
