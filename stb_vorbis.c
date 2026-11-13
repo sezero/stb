@@ -1947,7 +1947,7 @@ static int codebook_decode_deinterleave_repeat(vorb *f, Codebook *c, float **out
       // buffer (len*ch), our current offset within it (p_inter*ch)+(c_inter),
       // and the length we'll be using (effective)
       if (c_inter + p_inter*ch + effective > len * ch) {
-         effective = len*ch - (p_inter*ch + c_inter);
+         effective = len*ch - p_inter*ch - c_inter;
       }
 
    #ifdef STB_VORBIS_DIVIDES_IN_CODEBOOK
@@ -3159,7 +3159,7 @@ static int do_floor(vorb *f, Mapping *map, int i, int n, float *target, YTYPE *f
       if (lx < n2) {
          // optimization of: draw_line(target, lx,ly, n,ly, n2);
          for (j=lx; j < n2; ++j)
-            LINE_OP(target[j], inverse_db_table[ly&255]);
+            LINE_OP(target[j], inverse_db_table[ly & 255]);
          CHECK(f);
       }
    }
